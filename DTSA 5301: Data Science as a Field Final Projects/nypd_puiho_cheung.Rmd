@@ -1,0 +1,161 @@
+---
+title: "NYPD Shooting Incidents"
+output:
+  html_document:
+    df_print: paged
+date: "2024-04-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+```
+
+```{r load_file, include=FALSE}
+csv_url = "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+table = read.csv(csv_url)
+```
+
+### Introduction
+
+This is a brief data analysis on the Shooting Incident dataset provided by NYPD. 
+
+Data source: <https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD>
+
+The dataset consists of 28k+ objects with 21 variables. Here is an example data row:
+
+```{r}
+t(head(table, 1))
+```
+
+Based on observation, the dataset columns can be classified into few groups:
+
+1. Date and Times
+2. Locations
+3. Personal details of suspects and victims
+4. Others numeric values
+
+First we choose the interpretable columns, while excluding columns with most empty values:
+```{r}
+table_cleaned <- table %>%
+  select(c("OCCUR_DATE","OCCUR_TIME","BORO","PRECINCT",
+           "STATISTICAL_MURDER_FLAG","PERP_AGE_GROUP","PERP_SEX","PERP_RACE",
+           "VIC_AGE_GROUP","VIC_SEX","VIC_RACE")) %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         OCCUR_TIME = hms(OCCUR_TIME),
+         Year = year(OCCUR_DATE),
+         STATISTICAL_MURDER_FLAG = as.logical(STATISTICAL_MURDER_FLAG)
+         )
+t(head(table_cleaned, 1))
+```
+
+### Count by incidents
+
+Let's group by year and see the count of shooting incidents per year.
+```{r}
+table_cleaned %>%
+  ggplot(aes(x = Year)) +
+  geom_bar(fill = "pink",show.legend = TRUE) +
+  labs(title = "NYPD Shootings Incidents, Group by Year",
+       x = "Year",
+       y = "Count")
+```
+
+From the chart, we can see that shooting count drops declines gradually since 2006, but increases since 2020.
+
+Next we group by different regions.
+
+```{r}
+table_boro <- table_cleaned %>%
+  group_by(BORO) %>%
+  summarize(total_count = n())
+table_boro %>%
+  ggplot(aes(x="", y=total_count, fill=BORO)) + 
+  geom_bar(stat="identity", width = 1) +
+  coord_polar("y", start=0) +
+  labs(title = "NYPD Shootings Incidents, group by region")
+```
+
+Based on the pie chart, Brooklyn has the highest number of shooting incidents, followed by Bronx. Staten Island has the least amount.
+
+### Victim analysis
+
+Next, we analyse on the victim identities. 
+
+First is the age group:
+```{r}
+table_victim_age <- table_cleaned %>%
+  group_by(VIC_AGE_GROUP) %>%
+  summarize(total_count = n())
+table_victim_age %>%
+  ggplot(aes(x="", y=total_count, fill=VIC_AGE_GROUP)) + 
+  geom_bar(stat="identity", width = 1) +
+  coord_polar("y", start=0) +
+  labs(title = "NYPD Shootings Incidents Victims, group by Age Group")
+```
+
+The most targeted group is 25-44, followed by 18-24.
+
+Next is the race:
+```{r}
+table_victim_race <- table_cleaned %>%
+  group_by(VIC_RACE) %>%
+  summarize(total_count = n())
+table_victim_race %>%
+  ggplot(aes(x="", y=total_count, fill=VIC_RACE)) + 
+  geom_bar(stat="identity", width = 1) +
+  coord_polar("y", start=0) +
+  labs(title = "NYPD Shootings Incidents Victims, group by Race")
+```
+
+Black or Black hispanic people are the most significant group of victims.
+
+### Model
+
+Is the time (hours) of the date directly related to the shooting incidents?
+
+```{r}
+table_shooting_time <- table_cleaned %>%
+  group_by(OCCUR_TIME) %>%
+  summarize(total_count = n())
+table_shooting_time %>%
+  ggplot(aes(x=OCCUR_TIME, y=total_count, group=1)) + 
+  geom_line() + 
+  scale_x_time() +
+  labs(title = "NYPD Shootings Incidents Victims, group by time (up to minute)")
+```
+
+From the graph, incidents are more likely to happen during nighttime.
+
+```{r}
+table_shooting_by_hour <- table_cleaned %>%
+  mutate(hour_numeric = hour(OCCUR_TIME)) %>%
+  group_by(hour_numeric) %>%
+  summarize(total_count = n())
+table_shooting_by_hour %>%
+  ggplot(aes(x=hour_numeric, y=total_count, group=1)) + 
+  geom_line() + 
+  labs(title = "NYPD Shootings Incidents Victims, group by hours of a day")
+```
+
+The curve indicates the two factors are in quadratic relationship. Create a model between hour and incident count:
+
+```{r}
+mod <- lm(hour_numeric^2 + hour_numeric ~ total_count, data=table_shooting_by_hour)
+summary(mod)
+```
+
+Then the plot for model:
+```{r}
+table_shooting_by_hour %>%
+  ggplot(aes(x=hour_numeric, y=total_count, group=1)) + 
+  labs(title = "NYPD Shootings Incidents Victims, group by hours of a day") +
+  stat_smooth(method="lm", formula = y ~ I(x^2) + x) +
+  geom_point()
+```
+
+### Possible Bias
+- Dataset: the data source is NYPD, meaning that it only contains reported incidents. Those hidden incidents in regions not well covered by police may not be documented well. Also, how to determine an incident is related to shooting or not is influenced by the determination of police.
+- Result: the data analysis only reports the general trend of shooting incidents grouped by provided information, like time and locations. It may not have considered other outside factors like socio-economic factors, involvement of illegal activities of a certain region. Also, the timespan for the shooting incidents is relatively small (a few years only), it may not represent the complete picture of all recent years. 
